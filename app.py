@@ -8,12 +8,12 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from config import (
-    FIGMA_URL_DIRECTIVE,   # e.g. "https://www.figma.com/embed?..."
-    FIGMA_URL_AMBIGUOUS,   # e.g. "https://www.figma.com/embed?..."
+    FIGMA_URL_DIRECTIVE,   # Figma embed URL
+    FIGMA_URL_AMBIGUOUS,   # Figma embed URL
     SESSION_SECONDS        # e.g. 120
 )
 
-# ------------ 固定使用你这张 Google Sheet（请确保服务账号对其有 Editor 权限） ------------
+# ------------ 固定使用这张 Google Sheet ------------
 GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"
 
 # ------------ Google Sheets Auth ------------
@@ -45,7 +45,6 @@ HEADERS = [
 def open_target_ws():
     """优先 data；没有就用第一个工作表；如为空自动写入表头。"""
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
-
     try:
         ws = sh.worksheet("data")
         return ws
@@ -63,9 +62,12 @@ def open_target_ws():
         a1 = None
 
     if not a1 or "Type '@Date' to open date picker" in str(a1):
-        ws.update("A1", [HEADERS])
+        ws.update("A1", [HEADERS])  # 写入表头
 
     return ws
+
+# 👇 启动就初始化工作表 & 表头（不用等到最后一步）
+WS = open_target_ws()
 
 # ------------ Page config ------------
 st.set_page_config(page_title="Temporal Feel Study", page_icon="🫧", layout="centered")
@@ -96,6 +98,7 @@ def label_for(cond_tag: str) -> str:
 def render_figma(label: str):
     url = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
     st.components.v1.iframe(src=url, height=640, scrolling=True)
+    # 兜底外链（Figma 偶尔会拒绝内嵌）
     st.link_button("⇱ 在新标签打开原型 / Open prototype", url, use_container_width=True)
 
 def start_timer(label: str):
@@ -251,10 +254,19 @@ def page_demo():
     d["gender"] = st.selectbox("性别（可选）", ["不透露","女性","男性","非二元/其他"], index=0)
     st.session_state["responses"]["DEMO"] = d
 
+    # 🔧 调试：一键试写一行，方便排查权限/连接问题
+    if st.button("🔧 Test write to Sheet (debug)"):
+        try:
+            now_iso = datetime.utcnow().isoformat()
+            WS.append_row([now_iso, "TEST", "", "", "", ""], value_input_option="RAW")
+            st.success("✅ TEST 行已写入（去表里刷新看看）")
+        except Exception as e:
+            st.error(f"❌ TEST 写入失败：{e}")
+
     if st.button("Submit all & Save", type="primary"):
         now_iso = datetime.utcnow().isoformat()
         order = st.session_state["order"] or ["A","B"]
-        a_label = label_for(order[0])     # 记录每一段的条件标签
+        a_label = label_for(order[0])   # 记录每一段的条件标签
         b_label = label_for(order[1])
         durs = st.session_state["durations"]
 
@@ -286,11 +298,13 @@ def page_demo():
         demo = st.session_state["responses"]["DEMO"]
         row.extend([demo.get("age", ""), demo.get("gender", "")])
 
-        ws = open_target_ws()
-        ws.append_row(row)
-        st.success("✅ All data saved to Google Sheet.")
-        st.session_state["stage"] = "end"
-        st.rerun()
+        try:
+            WS.append_row(row, value_input_option="RAW")
+            st.success("✅ All data saved to Google Sheet.")
+            st.session_state["stage"] = "end"
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ 写入 Google Sheet 失败：{e}")
 
 def page_end():
     st.success("全部完成，感谢参与！你可以关闭页面。")
