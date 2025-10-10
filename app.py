@@ -11,39 +11,50 @@ from config import (
 )
 
 # ----------------- Google Sheets -----------------
+# ----------------- Google Sheets -----------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
 creds_info = st.secrets["gcp_service_account"]
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-def get_or_create_sheet(sheet_name: str):
-    try:
-        sh = gc.open(sheet_name)
-    except gspread.SpreadsheetNotFound:
-        sh = gc.create(sheet_name)
+# 建议把这个放到 config.py 里再 from config import GOOGLE_SHEET_ID
+GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"  # 你贴的那个 ID
+
+HEADER = [
+    # Meta
+    "timestamp_utc", "order", "A_condition", "B_condition",
+    # Durations
+    "dur_directive", "dur_ambiguous",
+    # A block (Q1..Q15)
+    *[f"A_Q{i}" for i in range(1, 16)],
+    # B block (Q1..Q15)
+    *[f"B_Q{i}" for i in range(1, 16)],
+    # Baseline
+    "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
+    "mood_today", "baseline_note",
+    # Demographics
+    "DEMO_age", "DEMO_gender",
+]
+
+def open_sheet_by_id(sheet_id: str):
+    """只用 ID 打开同一张表；没有权限会抛错（请先把服务账号设为 Editor）。"""
+    sh = gc.open_by_key(sheet_id)
     try:
         ws = sh.worksheet("data")
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title="data", rows=2000, cols=80)
-        ws.append_row([
-            # Meta
-            "timestamp_utc", "order", "A_condition", "B_condition",
-            # Durations
-            "dur_directive", "dur_ambiguous",
-            # A block (Q1..Q15)
-            *[f"A_Q{i}" for i in range(1,16)],
-            # B block (Q1..Q15)
-            *[f"B_Q{i}" for i in range(1,16)],
-            # Baseline (moved to its own page)
-            "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
-            "mood_today", "baseline_note",
-            # Demographics (kept轻量)
-            "DEMO_age", "DEMO_gender",
-        ])
+        ws.append_row(HEADER)
+    else:
+        # 如果已有工作表但首行是空的，补上表头
+        first_row = ws.row_values(1)
+        if not first_row:
+            ws.append_row(HEADER)
     return sh, ws
 
-sh, ws = get_or_create_sheet(GOOGLE_SHEET_NAME)
+# 用 ID 打开固定那一张；别再用名字 open/create 了
+sh, ws = open_sheet_by_id(GOOGLE_SHEET_ID)
+
 
 # ----------------- Page config -----------------
 st.set_page_config(page_title="Temporal Feel Study", page_icon="🫧", layout="centered")
