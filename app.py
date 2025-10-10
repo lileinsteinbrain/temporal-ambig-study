@@ -7,9 +7,11 @@ from google.oauth2.service_account import Credentials
 
 from config import (
     FIGMA_URL_DIRECTIVE, FIGMA_URL_AMBIGUOUS,
-    SESSION_SECONDS, GOOGLE_SHEET_NAME
+    SESSION_SECONDS, GOOGLE_SHEET_ID
 )
 
+# 建议把这个放到 config.py 里再 from config import GOOGLE_SHEET_ID
+GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"  # 你贴的那个 ID
 # ----------------- Google Sheets -----------------
 # ----------------- Google Sheets -----------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
@@ -18,48 +20,51 @@ creds_info = st.secrets["gcp_service_account"]
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-# 建议把这个放到 config.py 里再 from config import GOOGLE_SHEET_ID
-GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"  # 你贴的那个 ID
+GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"
 
-HEADER = [
+HEADERS = [
     # Meta
-    "timestamp_utc", "order", "A_condition", "B_condition",
+    "timestamp_utc","order","A_condition","B_condition",
     # Durations
-    "dur_directive", "dur_ambiguous",
-    # A block (Q1..Q15)
-    *[f"A_Q{i}" for i in range(1, 16)],
-    # B block (Q1..Q15)
-    *[f"B_Q{i}" for i in range(1, 16)],
+    "dur_directive","dur_ambiguous",
+    # A 1..15
+    *[f"A_Q{i}" for i in range(1,16)],
+    # B 1..15
+    *[f"B_Q{i}" for i in range(1,16)],
     # Baseline
-    "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
-    "mood_today", "baseline_note",
+    "BASE_fast_days","BASE_fragment","BASE_control_anx",
+    "mood_today","baseline_note",
     # Demographics
-    "DEMO_age", "DEMO_gender",
+    "DEMO_age","DEMO_gender",
 ]
 
-def open_sheet_by_id(sheet_id: str):
-    """只用 ID 打开同一张表；没有权限会抛错（请先把服务账号设为 Editor）。"""
-    sh = gc.open_by_key(sheet_id)
+def open_target_ws():
+    """无脑稳：优先 data；没有就用 Sheet1；空的话先写表头。"""
+    sh = gc.open_by_key(GOOGLE_SHEET_ID)
+
+    # 1) 先找 data
     try:
         ws = sh.worksheet("data")
+        return ws
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="data", rows=2000, cols=80)
-        ws.append_row([
-            # Meta
-            "timestamp_utc", "order", "A_condition", "B_condition",
-            # Durations
-            "dur_directive", "dur_ambiguous",
-            # A block (Q1..Q15)
-            *[f"A_Q{i}" for i in range(1, 16)],
-            # B block (Q1..Q15)
-            *[f"B_Q{i}" for i in range(1, 16)],
-            # Baseline
-            "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
-            "mood_today", "baseline_note",
-            # Demographics
-            "DEMO_age", "DEMO_gender",
-        ])
-    return sh, ws
+        pass
+
+    # 2) 退而求其次：Sheet1（或第一个表）
+    try:
+        ws = sh.sheet1
+    except Exception:
+        ws = sh.add_worksheet(title="Sheet1", rows=2000, cols=80)
+
+    # 3) 如果第一行是空的/默认提示，补表头
+    try:
+        a1 = ws.acell("A1").value
+    except Exception:
+        a1 = None
+    if not a1 or "Type '@Date' to open date picker" in str(a1):
+        ws.update("A1", [HEADERS])
+
+    return ws
+
 
 # 用 ID 打开固定那一张；别再用名字 open/create 了
 sh, ws = open_sheet_by_id(GOOGLE_SHEET_ID)
