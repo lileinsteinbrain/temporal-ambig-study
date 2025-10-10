@@ -1,79 +1,76 @@
+# app.py
 import random
 import time
 from datetime import datetime
+
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 
 from config import (
-    FIGMA_URL_DIRECTIVE, FIGMA_URL_AMBIGUOUS,
-    SESSION_SECONDS, GOOGLE_SHEET_ID
+    FIGMA_URL_DIRECTIVE,   # e.g. "https://www.figma.com/embed?..."
+    FIGMA_URL_AMBIGUOUS,   # e.g. "https://www.figma.com/embed?..."
+    SESSION_SECONDS        # e.g. 120
 )
 
-# 建议把这个放到 config.py 里再 from config import GOOGLE_SHEET_ID
-GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"  # 你贴的那个 ID
-# ----------------- Google Sheets -----------------
-# ----------------- Google Sheets -----------------
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
-          "https://www.googleapis.com/auth/drive"]
-creds_info = st.secrets["gcp_service_account"]
+# ------------ 固定使用你这张 Google Sheet（请确保服务账号对其有 Editor 权限） ------------
+GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"
+
+# ------------ Google Sheets Auth ------------
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+creds_info = st.secrets["gcp_service_account"]  # 放在 Streamlit Cloud 的 Secrets
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"
-
+# ------------ 统一表头（若表为空会自动补上） ------------
 HEADERS = [
     # Meta
-    "timestamp_utc","order","A_condition","B_condition",
+    "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
-    "dur_directive","dur_ambiguous",
-    # A 1..15
-    *[f"A_Q{i}" for i in range(1,16)],
-    # B 1..15
-    *[f"B_Q{i}" for i in range(1,16)],
+    "dur_directive", "dur_ambiguous",
+    # A block (Q1..Q15)
+    *[f"A_Q{i}" for i in range(1, 16)],
+    # B block (Q1..Q15)
+    *[f"B_Q{i}" for i in range(1, 16)],
     # Baseline
-    "BASE_fast_days","BASE_fragment","BASE_control_anx",
-    "mood_today","baseline_note",
+    "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
+    "mood_today", "baseline_note",
     # Demographics
-    "DEMO_age","DEMO_gender",
+    "DEMO_age", "DEMO_gender",
 ]
 
 def open_target_ws():
-    """无脑稳：优先 data；没有就用 Sheet1；空的话先写表头。"""
+    """优先 data；没有就用第一个工作表；如为空自动写入表头。"""
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
 
-    # 1) 先找 data
     try:
         ws = sh.worksheet("data")
         return ws
     except gspread.WorksheetNotFound:
         pass
 
-    # 2) 退而求其次：Sheet1（或第一个表）
     try:
         ws = sh.sheet1
     except Exception:
         ws = sh.add_worksheet(title="Sheet1", rows=2000, cols=80)
 
-    # 3) 如果第一行是空的/默认提示，补表头
     try:
         a1 = ws.acell("A1").value
     except Exception:
         a1 = None
+
     if not a1 or "Type '@Date' to open date picker" in str(a1):
         ws.update("A1", [HEADERS])
 
     return ws
 
-
-# 用 ID 打开固定那一张；别再用名字 open/create 了
-sh, ws = open_sheet_by_id(GOOGLE_SHEET_ID)
-
-
-# ----------------- Page config -----------------
+# ------------ Page config ------------
 st.set_page_config(page_title="Temporal Feel Study", page_icon="🫧", layout="centered")
 
-# ----------------- State init -----------------
+# ------------ State init ------------
 def init_state():
     defaults = {
         "consent": False,
@@ -82,24 +79,23 @@ def init_state():
         "order": None,                 # ["A","B"] 或 ["B","A"]
         "start_ts": None,
         "end_ts": None,
-        "current_condition": None,     # "Directive"/"Ambiguous" 用于计时保护
+        "current_condition": None,     # "Directive"/"Ambiguous"（计时保护）
         "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
         "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+
 init_state()
 
-# ----------------- Helpers -----------------
+# ------------ Helpers ------------
 def label_for(cond_tag: str) -> str:
-    """输入 'A'/'B'；输出人可读标签"""
+    """输入 'A'/'B'；输出人可读标签（A=Ambiguous, B=Directive）。"""
     return "Ambiguous" if cond_tag == "A" else "Directive"
 
 def render_figma(label: str):
     url = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
-    # 内嵌
     st.components.v1.iframe(src=url, height=640, scrolling=True)
-    # 兜底外链
     st.link_button("⇱ 在新标签打开原型 / Open prototype", url, use_container_width=True)
 
 def start_timer(label: str):
@@ -116,7 +112,7 @@ def stop_timer() -> float:
 def likert(prompt: str):
     return st.radio(prompt, options=[1,2,3,4,5,6,7], horizontal=True)
 
-# ----------------- UI blocks -----------------
+# ------------ UI blocks ------------
 def page_consent():
     st.title("实验参与同意 / Consent")
     st.markdown("""
@@ -168,17 +164,14 @@ def page_choose_order():
         if choice == "随机 / Random":
             order = ["A","B"] if int(time.time()) % 2 == 0 else ["B","A"]
         else:
-            order = ["Directive","Ambiguous"] if choice.startswith("Directive") else ["Ambiguous","Directive"]
-            # 转成 A/B 标签（A=Ambiguous，B=Directive）
-            order = ["A","B"] if order[0]=="Ambiguous" else ["B","A"]
+            order_labels = ["Directive","Ambiguous"] if choice.startswith("Directive") else ["Ambiguous","Directive"]
+            order = ["A","B"] if order_labels[0] == "Ambiguous" else ["B","A"]
         st.session_state["order"] = order
         st.session_state["stage"] = "sessionA"
         st.rerun()
 
 def questionnaire_ui(tag: str):
-    """完整对齐 Appendix：S2 结构层, S3 意象层, S4 反思层"""
     q = {}
-
     st.markdown("### Section 2 — Structured / Directive Layer（1–7）")
     q["Q1"] = likert("我能清晰地感到时间在流动（Temporal awareness）")
     q["Q2"] = likert("我觉得自己能掌控互动的节奏（Sense of control）")
@@ -189,12 +182,9 @@ def questionnaire_ui(tag: str):
     q["Q7"] = likert("这段体验让我情绪更平稳（Calmness）")
 
     st.markdown("### Section 3 — Phenomenological Imagery Probe")
-    q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：",
-                            ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
-    q["Q9"]  = st.selectbox("这段体验中的时间更像：",
-                            ["一条直线","一个圆","循环","空白/真空","其他"], index=0)
-    q["Q10"] = st.selectbox("当界面回应你时，你更像是在：",
-                            ["引导它","被它带着走","和它一起移动","谁也没在控制"], index=1)
+    q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：", ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
+    q["Q9"]  = st.selectbox("这段体验中的时间更像：", ["一条直线","一个圆","循环","空白/真空","其他"], index=0)
+    q["Q10"] = st.selectbox("当界面回应你时，你更像是在：", ["引导它","被它带着走","和它一起移动","谁也没在控制"], index=1)
     q["Q11"] = st.text_input("用一个词形容这段体验的氛围：", value="")
 
     st.markdown("### Section 4 — Reflective / Meta Layer")
@@ -207,14 +197,10 @@ def questionnaire_ui(tag: str):
     st.session_state["responses"][tag] = q
 
 def page_session(tag: str, label: str):
-    """
-    tag: "A" 或 "B"
-    label: "Ambiguous" 或 "Directive"
-    """
     st.subheader(f"Session {tag} — {label}")
     st.caption("建议体验约 2 分钟。点击开始后计时自动记录。")
 
-    # 条件切换保护：如果切换了条件，清空之前计时
+    # 条件切换保护：若切换了条件，清空之前计时
     if st.session_state["current_condition"] not in (None, label):
         st.session_state["start_ts"] = None
         st.session_state["end_ts"] = None
@@ -243,7 +229,6 @@ def page_session(tag: str, label: str):
             st.caption("⏳ 建议至少体验到推荐时长后再停止。")
 
 def page_form(tag: str, cond_tag: str):
-    """cond_tag: 'A' 或 'B'（用于显示条件标签与保存）"""
     label = label_for(cond_tag)  # "Ambiguous"/"Directive"
     st.subheader(f"Questionnaire {tag} — {label}")
     st.caption("请基于刚才这一段体验作答。")
@@ -267,43 +252,41 @@ def page_demo():
     st.session_state["responses"]["DEMO"] = d
 
     if st.button("Submit all & Save", type="primary"):
-        # 汇总一行数据
         now_iso = datetime.utcnow().isoformat()
         order = st.session_state["order"] or ["A","B"]
-        a_label = label_for(order[0])   # 记录Q0
+        a_label = label_for(order[0])     # 记录每一段的条件标签
         b_label = label_for(order[1])
-
         durs = st.session_state["durations"]
 
         row = [
             now_iso,
-            "→".join(order),            # 原始 A/B 顺序
-            a_label, b_label,           # Q0: 每一段的条件标签
+            "→".join(order),
+            a_label, b_label,
             durs.get("Directive", None),
             durs.get("Ambiguous", None),
         ]
         # A responses
-        for i in range(1,16):
+        for i in range(1, 16):
             row.append(st.session_state["responses"]["A"].get(f"Q{i}", ""))
         # B responses
-        for i in range(1,16):
+        for i in range(1, 16):
             row.append(st.session_state["responses"]["B"].get(f"Q{i}", ""))
 
         # Baseline
         base = st.session_state["responses"]["BASE"]
         row.extend([
-            base.get("BASE_fast_days",""),
-            base.get("BASE_fragment",""),
-            base.get("BASE_control_anx",""),
-            base.get("mood_today",""),
-            base.get("baseline_note","")
+            base.get("BASE_fast_days", ""),
+            base.get("BASE_fragment", ""),
+            base.get("BASE_control_anx", ""),
+            base.get("mood_today", ""),
+            base.get("baseline_note", "")
         ])
 
         # Demographics
         demo = st.session_state["responses"]["DEMO"]
-        row.extend([demo.get("age",""), demo.get("gender","")])
+        row.extend([demo.get("age", ""), demo.get("gender", "")])
 
-        sh, ws = sh, ws = open_sheet_by_id(GOOGLE_SHEET_ID)
+        ws = open_target_ws()
         ws.append_row(row)
         st.success("✅ All data saved to Google Sheet.")
         st.session_state["stage"] = "end"
@@ -313,29 +296,25 @@ def page_end():
     st.success("全部完成，感谢参与！你可以关闭页面。")
     st.caption("研究者提示：打开 Google Drive 搜索表名即可查看数据。")
 
-# ----------------- Dispatcher -----------------
+# ------------ Dispatcher ------------
 def dispatch():
-    # 1) 必须先过 consent
     if not st.session_state.get("consent", False):
         page_consent(); return
 
-    # 2) baseline
     stage = st.session_state.get("stage", "baseline")
+
     if stage == "baseline":
         page_baseline(); return
 
-    # 3) 顺序
     if stage == "choose_order":
         page_choose_order(); return
 
-    # 4) 防御：order 一定要就位
     if "order" not in st.session_state or not st.session_state["order"]:
-        st.session_state["order"] = random.sample(["A","B"], 2)
+        st.session_state["order"] = random.sample(["A", "B"], 2)
 
-    # 5) session / form / break / demo
     if stage == "sessionA":
-        cond  = st.session_state["order"][0]        # "A" or "B"
-        label = label_for(cond)                     # "Ambiguous"/"Directive"
+        cond = st.session_state["order"][0]
+        label = label_for(cond)
         page_session("A", label); return
 
     if stage == "formA":
@@ -346,7 +325,7 @@ def dispatch():
         page_break(); return
 
     if stage == "sessionB":
-        cond  = st.session_state["order"][1]
+        cond = st.session_state["order"][1]
         label = label_for(cond)
         page_session("B", label); return
 
@@ -359,5 +338,5 @@ def dispatch():
 
     page_end()
 
-# ----------------- Run -----------------
+# ------------ Run ------------
 dispatch()
