@@ -44,12 +44,21 @@ def open_sheet_by_id(sheet_id: str):
         ws = sh.worksheet("data")
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title="data", rows=2000, cols=80)
-        ws.append_row(HEADER)
-    else:
-        # 如果已有工作表但首行是空的，补上表头
-        first_row = ws.row_values(1)
-        if not first_row:
-            ws.append_row(HEADER)
+        ws.append_row([
+            # Meta
+            "timestamp_utc", "order", "A_condition", "B_condition",
+            # Durations
+            "dur_directive", "dur_ambiguous",
+            # A block (Q1..Q15)
+            *[f"A_Q{i}" for i in range(1, 16)],
+            # B block (Q1..Q15)
+            *[f"B_Q{i}" for i in range(1, 16)],
+            # Baseline
+            "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
+            "mood_today", "baseline_note",
+            # Demographics
+            "DEMO_age", "DEMO_gender",
+        ])
     return sh, ws
 
 # 用 ID 打开固定那一张；别再用名字 open/create 了
@@ -289,7 +298,7 @@ def page_demo():
         demo = st.session_state["responses"]["DEMO"]
         row.extend([demo.get("age",""), demo.get("gender","")])
 
-        sh, ws = get_or_create_sheet(GOOGLE_SHEET_NAME)
+        sh, ws = sh, ws = open_sheet_by_id(GOOGLE_SHEET_ID)
         ws.append_row(row)
         st.success("✅ All data saved to Google Sheet.")
         st.session_state["stage"] = "end"
