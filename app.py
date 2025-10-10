@@ -25,13 +25,21 @@ def get_or_create_sheet(sheet_name: str):
     try:
         ws = sh.worksheet("data")
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="data", rows=1000, cols=50)
+        ws = sh.add_worksheet(title="data", rows=2000, cols=80)
         ws.append_row([
-            "timestamp_utc","order","dur_directive","dur_ambiguous",
+            # Meta
+            "timestamp_utc", "order", "A_condition", "B_condition",
+            # Durations
+            "dur_directive", "dur_ambiguous",
+            # A block (Q1..Q15)
             *[f"A_Q{i}" for i in range(1,16)],
+            # B block (Q1..Q15)
             *[f"B_Q{i}" for i in range(1,16)],
-            "DEMO_age","DEMO_gender","DEMO_BASE_fast_days","DEMO_BASE_fragment",
-            "DEMO_BASE_control_anx","DEMO_mood_today","DEMO_baseline_note"
+            # Baseline (moved to its own page)
+            "BASE_fast_days", "BASE_fragment", "BASE_control_anx",
+            "mood_today", "baseline_note",
+            # Demographics (kept轻量)
+            "DEMO_age", "DEMO_gender",
         ])
     return sh, ws
 
@@ -44,28 +52,33 @@ st.set_page_config(page_title="Temporal Feel Study", page_icon="🫧", layout="c
 def init_state():
     defaults = {
         "consent": False,
-        "stage": "consent",          # consent -> choose_order -> sessionA -> formA -> break -> sessionB -> formB -> demo -> end
-        "order": None,               # ["A","B"] 或 ["B","A"]
+        # flow: consent -> baseline -> choose_order -> sessionA -> formA -> break -> sessionB -> formB -> demo -> end
+        "stage": "consent",
+        "order": None,                 # ["A","B"] 或 ["B","A"]
         "start_ts": None,
         "end_ts": None,
-        "durations": {},             # {"Directive": seconds, "Ambiguous": seconds}
-        "responses": {"A": {}, "B": {}, "DEMO": {}},
+        "current_condition": None,     # "Directive"/"Ambiguous" 用于计时保护
+        "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
+        "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
 init_state()
 
 # ----------------- Helpers -----------------
-def label_for(cond: str) -> str:
-    # A/B -> 人可读标签（如需互换只改这里）
-    return "Ambiguous" if cond == "A" else "Directive"
+def label_for(cond_tag: str) -> str:
+    """输入 'A'/'B'；输出人可读标签"""
+    return "Ambiguous" if cond_tag == "A" else "Directive"
 
 def render_figma(label: str):
-    # label 需要是 "Directive" 或 "Ambiguous"
     url = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
-    st.components.v1.iframe(src=url, height=620, scrolling=True)
+    # 内嵌
+    st.components.v1.iframe(src=url, height=640, scrolling=True)
+    # 兜底外链
+    st.link_button("⇱ 在新标签打开原型 / Open prototype", url, use_container_width=True)
 
-def start_timer():
+def start_timer(label: str):
+    st.session_state["current_condition"] = label
     st.session_state["start_ts"] = time.time()
     st.session_state["end_ts"] = None
 
@@ -73,10 +86,10 @@ def stop_timer() -> float:
     if st.session_state["start_ts"] is None:
         return 0.0
     st.session_state["end_ts"] = time.time()
-    return st.session_state["end_ts"] - st.session_state["start_ts"]
+    return float(st.session_state["end_ts"] - st.session_state["start_ts"])
 
-def likert(label): 
-    return st.radio(label, options=[1,2,3,4,5,6,7], horizontal=True)
+def likert(prompt: str):
+    return st.radio(prompt, options=[1,2,3,4,5,6,7], horizontal=True)
 
 # ----------------- UI blocks -----------------
 def page_consent():
@@ -98,29 +111,50 @@ def page_consent():
 勾选后表示：我已理解以上内容，并自愿参与本研究。
 """)
     agree = st.checkbox("我已阅读并同意 / I consent.", value=False)
-    if st.button("继续 / Continue"):
+    if st.button("继续 / Continue", use_container_width=True):
         if not agree:
             st.warning("请先勾选同意")
         else:
             st.session_state["consent"] = True
-            st.session_state["stage"]   = "choose_order"
+            st.session_state["stage"]   = "baseline"
             st.rerun()
+
+def page_baseline():
+    st.subheader("最近一周 & 今日状态（基线测量）")
+    b = {}
+    st.markdown("**最近一周（1=非常不同意，7=非常同意）**")
+    b["BASE_fast_days"]   = likert("我常觉得一天过得很快（时间加速感）")
+    b["BASE_fragment"]    = likert("我常忘记具体哪天发生了什么（时间断裂感）")
+    b["BASE_control_anx"] = likert("我容易被“时间控制/拖延感”困扰（时间焦虑）")
+
+    st.markdown("**今日状态**")
+    b["mood_today"] = st.slider("你今天整体情绪如何？", 0, 10, 6)
+    b["baseline_note"] = st.text_area("此刻关于你自己的“时间感”的一句话（可选）", height=60)
+
+    if st.button("继续 / Continue", type="primary", use_container_width=True):
+        st.session_state["responses"]["BASE"] = b
+        st.session_state["stage"] = "choose_order"
+        st.rerun()
 
 def page_choose_order():
     st.subheader("选择体验顺序（或随机）")
-    order_sel = st.radio("先体验哪一个？", ["A → B", "B → A", "随机 / Random"], index=2)
-    if st.button("开始 / Start"):
-        if order_sel == "随机 / Random":
+    choice = st.radio("先体验哪一个？", ["Directive → Ambiguous", "Ambiguous → Directive", "随机 / Random"], index=2)
+    if st.button("开始 / Start", use_container_width=True):
+        if choice == "随机 / Random":
             order = ["A","B"] if int(time.time()) % 2 == 0 else ["B","A"]
         else:
-            order = ["A","B"] if order_sel.startswith("A") else ["B","A"]
+            order = ["Directive","Ambiguous"] if choice.startswith("Directive") else ["Ambiguous","Directive"]
+            # 转成 A/B 标签（A=Ambiguous，B=Directive）
+            order = ["A","B"] if order[0]=="Ambiguous" else ["B","A"]
         st.session_state["order"] = order
         st.session_state["stage"] = "sessionA"
         st.rerun()
 
 def questionnaire_ui(tag: str):
-    st.markdown("### Section 2 — Structured / Directive Layer (1–7)")
+    """完整对齐 Appendix：S2 结构层, S3 意象层, S4 反思层"""
     q = {}
+
+    st.markdown("### Section 2 — Structured / Directive Layer（1–7）")
     q["Q1"] = likert("我能清晰地感到时间在流动（Temporal awareness）")
     q["Q2"] = likert("我觉得自己能掌控互动的节奏（Sense of control）")
     q["Q3"] = likert("系统的反应大多在我的预期之内（Predictability）")
@@ -130,9 +164,12 @@ def questionnaire_ui(tag: str):
     q["Q7"] = likert("这段体验让我情绪更平稳（Calmness）")
 
     st.markdown("### Section 3 — Phenomenological Imagery Probe")
-    q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：", ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
-    q["Q9"]  = st.selectbox("这段体验中的时间更像：", ["一条直线","一个圆","循环","空白/真空","其他"], index=0)
-    q["Q10"] = st.selectbox("当界面回应你时，你更像是在：", ["引导它","被它带着走","和它一起移动","谁也没在控制"], index=1)
+    q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：",
+                            ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
+    q["Q9"]  = st.selectbox("这段体验中的时间更像：",
+                            ["一条直线","一个圆","循环","空白/真空","其他"], index=0)
+    q["Q10"] = st.selectbox("当界面回应你时，你更像是在：",
+                            ["引导它","被它带着走","和它一起移动","谁也没在控制"], index=1)
     q["Q11"] = st.text_input("用一个词形容这段体验的氛围：", value="")
 
     st.markdown("### Section 4 — Reflective / Meta Layer")
@@ -146,20 +183,23 @@ def questionnaire_ui(tag: str):
 
 def page_session(tag: str, label: str):
     """
-    tag: "A" or "B"
-    label: "Ambiguous" or "Directive"（用于渲染 figma 与时长记账的 key）
+    tag: "A" 或 "B"
+    label: "Ambiguous" 或 "Directive"
     """
     st.subheader(f"Session {tag} — {label}")
     st.caption("建议体验约 2 分钟。点击开始后计时自动记录。")
 
-    # 开始计时
+    # 条件切换保护：如果切换了条件，清空之前计时
+    if st.session_state["current_condition"] not in (None, label):
+        st.session_state["start_ts"] = None
+        st.session_state["end_ts"] = None
+
     if st.session_state["start_ts"] is None:
-        if st.button("▶️ Start"):
-            start_timer()
+        if st.button("▶️ Start", type="primary"):
+            start_timer(label)
             st.rerun()
         return
 
-    # 已经在计时
     elapsed = int(time.time() - st.session_state["start_ts"])
     remaining = max(0, SESSION_SECONDS - elapsed)
     st.info(f"已用时 {elapsed}s · 建议至少 {SESSION_SECONDS}s · 剩余 {remaining}s")
@@ -168,7 +208,7 @@ def page_session(tag: str, label: str):
     st.write("")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("⏹ Stop & go to questionnaire"):
+        if st.button("⏹ Stop & go to questionnaire", use_container_width=True):
             dur = stop_timer()
             st.session_state["durations"][label] = round(dur, 2)
             st.session_state["stage"] = "formA" if tag == "A" else "formB"
@@ -178,61 +218,65 @@ def page_session(tag: str, label: str):
             st.caption("⏳ 建议至少体验到推荐时长后再停止。")
 
 def page_form(tag: str, cond_tag: str):
-    """cond_tag 是 'A' 或 'B'，用来取回本轮是哪种并回写问卷到 responses[tag]"""
-    label = label_for(cond_tag)  # 转成人可读标签，仅需展示时使用
+    """cond_tag: 'A' 或 'B'（用于显示条件标签与保存）"""
+    label = label_for(cond_tag)  # "Ambiguous"/"Directive"
     st.subheader(f"Questionnaire {tag} — {label}")
+    st.caption("请基于刚才这一段体验作答。")
     questionnaire_ui(tag)
-    if st.button("Submit questionnaire"):
-        st.success("✅ Responses saved in session.")
+    if st.button("Submit questionnaire", type="primary"):
+        st.success("✅ Responses saved.")
         st.session_state["stage"] = "break" if tag == "A" else "demo"
         st.rerun()
 
 def page_break():
     st.info("休息 1 分钟后进行下一段体验（喝口水、伸展一下）。准备好后点击继续。")
-    if st.button("Continue to Session B"):
+    if st.button("Continue to Session B", use_container_width=True):
         st.session_state["stage"] = "sessionB"
         st.rerun()
 
 def page_demo():
-    st.subheader("Demographics & Recent Temporal Baseline")
+    st.subheader("Demographics（简）")
     d = {}
-    d["age"]   = st.selectbox("年龄段", ["18–24","25–34","35–44","45–54","55+"], index=1)
+    d["age"]    = st.selectbox("年龄段", ["18–24","25–34","35–44","45–54","55+"], index=1)
     d["gender"] = st.selectbox("性别（可选）", ["不透露","女性","男性","非二元/其他"], index=0)
-
-    st.markdown("**最近一周的主观时间状态（1=非常不同意，7=非常同意）**")
-    d["BASE_fast_days"]   = likert("我常觉得一天过得很快（时间加速感）")
-    d["BASE_fragment"]    = likert("我常忘记具体哪天发生了什么（时间断裂感）")
-    d["BASE_control_anx"] = likert("我容易被“时间控制/拖延感”困扰（时间焦虑）")
-
-    st.markdown("**今日状态**")
-    d["mood_today"]   = st.slider("你今天整体情绪如何？", 0, 10, 6)
-    d["baseline_note"] = st.text_area("此刻关于你自己的“时间感”的一句话（可选）", height=60)
-
     st.session_state["responses"]["DEMO"] = d
 
-    if st.button("Submit all & Save"):
+    if st.button("Submit all & Save", type="primary"):
         # 汇总一行数据
         now_iso = datetime.utcnow().isoformat()
         order = st.session_state["order"] or ["A","B"]
-        durs  = st.session_state["durations"]
+        a_label = label_for(order[0])   # 记录Q0
+        b_label = label_for(order[1])
+
+        durs = st.session_state["durations"]
+
         row = [
             now_iso,
-            "→".join(order),
+            "→".join(order),            # 原始 A/B 顺序
+            a_label, b_label,           # Q0: 每一段的条件标签
             durs.get("Directive", None),
             durs.get("Ambiguous", None),
         ]
+        # A responses
         for i in range(1,16):
             row.append(st.session_state["responses"]["A"].get(f"Q{i}", ""))
+        # B responses
         for i in range(1,16):
             row.append(st.session_state["responses"]["B"].get(f"Q{i}", ""))
 
-        demo = st.session_state["responses"]["DEMO"]
+        # Baseline
+        base = st.session_state["responses"]["BASE"]
         row.extend([
-            demo.get("age",""), demo.get("gender",""),
-            demo.get("BASE_fast_days",""), demo.get("BASE_fragment",""),
-            demo.get("BASE_control_anx",""), demo.get("mood_today",""),
-            demo.get("baseline_note","")
+            base.get("BASE_fast_days",""),
+            base.get("BASE_fragment",""),
+            base.get("BASE_control_anx",""),
+            base.get("mood_today",""),
+            base.get("baseline_note","")
         ])
+
+        # Demographics
+        demo = st.session_state["responses"]["DEMO"]
+        row.extend([demo.get("age",""), demo.get("gender","")])
 
         sh, ws = get_or_create_sheet(GOOGLE_SHEET_NAME)
         ws.append_row(row)
@@ -246,25 +290,31 @@ def page_end():
 
 # ----------------- Dispatcher -----------------
 def dispatch():
+    # 1) 必须先过 consent
     if not st.session_state.get("consent", False):
         page_consent(); return
 
-    stage = st.session_state.get("stage", "choose_order")
+    # 2) baseline
+    stage = st.session_state.get("stage", "baseline")
+    if stage == "baseline":
+        page_baseline(); return
 
+    # 3) 顺序
     if stage == "choose_order":
         page_choose_order(); return
 
-    # 防御：order 一定要就位
+    # 4) 防御：order 一定要就位
     if "order" not in st.session_state or not st.session_state["order"]:
         st.session_state["order"] = random.sample(["A","B"], 2)
 
+    # 5) session / form / break / demo
     if stage == "sessionA":
         cond  = st.session_state["order"][0]        # "A" or "B"
         label = label_for(cond)                     # "Ambiguous"/"Directive"
         page_session("A", label); return
 
     if stage == "formA":
-        cond = st.session_state["order"][0]         # "A" or "B"
+        cond = st.session_state["order"][0]
         page_form("A", cond); return
 
     if stage == "break":
