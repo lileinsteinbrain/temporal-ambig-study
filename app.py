@@ -95,22 +95,29 @@ def label_for(cond_tag: str) -> str:
     """输入 'A'/'B'；输出人可读标签（A=Ambiguous, B=Directive）。"""
     return "Ambiguous" if cond_tag == "A" else "Directive"
 
+# 放在文件顶部其它 import 下面
+from urllib.parse import quote
+
+def _figma_embed_url(proto_url: str) -> str:
+    """
+    把 Figma 的 proto 分享链接转换成可内嵌的 embed 链接。
+    - 隐藏 Figma 的播放 UI（hide-ui=1）
+    - 保留你在 Figma 里设定的起始帧与flow
+    """
+    encoded = quote(proto_url, safe="")
+    return f"https://www.figma.com/embed?embed_host=share&url={encoded}&hide-ui=1"
+
 def render_figma(label: str):
-    url = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
+    # label 必须是 "Directive" 或 "Ambiguous"
+    proto = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
+    embed = _figma_embed_url(proto)
 
-    # 适配：桌面高 720，手机给 560（大概占满一屏）
-    height = 720
-    if st.session_state.get("is_mobile"):
-        height = 560
+    # 宽屏展示；手机上也能铺满
+    st.components.v1.iframe(src=embed, height=820, width=1200, scrolling=False)
 
-    st.components.v1.iframe(
-        src=url, 
-        height=height, 
-        scrolling=False
-    )
+    # 兜底：真遇到公司网络或浏览器策略拦 iframe，就给外链
+    st.link_button("⇱ 在新标签打开原型 / Open prototype", proto, use_container_width=True)
 
-    # 兜底：放一个外链按钮（万一 iframe 被浏览器拦了）
-    st.link_button("⇱ 在新标签打开原型 / Open prototype", url, use_container_width=True)
 
 def start_timer(label: str):
     st.session_state["current_condition"] = label
