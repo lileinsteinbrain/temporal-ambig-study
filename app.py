@@ -97,8 +97,19 @@ def label_for(cond_tag: str) -> str:
 
 def render_figma(label: str):
     url = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
-    st.components.v1.iframe(src=url, height=640, scrolling=True)
-    # 兜底外链（Figma 偶尔会拒绝内嵌）
+
+    # 适配：桌面高 720，手机给 560（大概占满一屏）
+    height = 720
+    if st.session_state.get("is_mobile"):
+        height = 560
+
+    st.components.v1.iframe(
+        src=url, 
+        height=height, 
+        scrolling=False
+    )
+
+    # 兜底：放一个外链按钮（万一 iframe 被浏览器拦了）
     st.link_button("⇱ 在新标签打开原型 / Open prototype", url, use_container_width=True)
 
 def start_timer(label: str):
