@@ -2,14 +2,15 @@
 import random
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 
 from config import (
-    FIGMA_URL_DIRECTIVE,   # Figma embed URL
-    FIGMA_URL_AMBIGUOUS,   # Figma embed URL
+    FIGMA_URL_DIRECTIVE,   # Figma prototype "Play" URL
+    FIGMA_URL_AMBIGUOUS,   # Figma prototype "Play" URL
     SESSION_SECONDS        # e.g. 120
 )
 
@@ -84,6 +85,7 @@ def init_state():
         "current_condition": None,     # "Directive"/"Ambiguous"（计时保护）
         "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
         "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
+        "elapsed_probe": None,         # 防 0s 卡住的小探针
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -95,34 +97,33 @@ def label_for(cond_tag: str) -> str:
     """输入 'A'/'B'；输出人可读标签（A=Ambiguous, B=Directive）。"""
     return "Ambiguous" if cond_tag == "A" else "Directive"
 
-# 放在文件顶部其它 import 下面
-from urllib.parse import quote
-
 def _figma_embed_url(proto_url: str) -> str:
     """
-    把 Figma 的 proto 分享链接转换成可内嵌的 embed 链接。
-    - 隐藏 Figma 的播放 UI（hide-ui=1）
-    - 保留你在 Figma 里设定的起始帧与flow
+    把 Figma 的 proto 分享链接转换成可内嵌的 embed 链接，并隐藏 UI。
+    说明：直接拿 Figma 的“播放链接”(含 node-id/starting-point) 来转即可。
     """
     encoded = quote(proto_url, safe="")
-    return f"https://www.figma.com/embed?embed_host=share&url={encoded}&hide-ui=1"
+    # 为提升清晰度和可用面积，隐藏 UI、按宽缩放、隐藏侧栏
+    return (
+        f"https://www.figma.com/embed?embed_host=share"
+        f"&url={encoded}"
+        f"&hide-ui=1&hide-sidebar=1&scaling=scale-down-width"
+    )
 
 def render_figma(label: str):
     # label 必须是 "Directive" 或 "Ambiguous"
     proto = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
     embed = _figma_embed_url(proto)
-
-    # 宽屏展示；手机上也能铺满
-    st.components.v1.iframe(src=embed, height=820, width=1200, scrolling=False)
-
-    # 兜底：真遇到公司网络或浏览器策略拦 iframe，就给外链
+    # 更高的 iframe，手机也清晰；scrolling 关掉避免双重滚动
+    st.components.v1.iframe(src=embed, height=820, scrolling=False)
+    # 兜底外链（少数环境会拦截 iframe）
     st.link_button("⇱ 在新标签打开原型 / Open prototype", proto, use_container_width=True)
-
 
 def start_timer(label: str):
     st.session_state["current_condition"] = label
     st.session_state["start_ts"] = time.time()
     st.session_state["end_ts"] = None
+    st.session_state["elapsed_probe"] = time.time()  # 记录一个探针时间，防 0s 卡住
 
 def stop_timer() -> float:
     if st.session_state["start_ts"] is None:
@@ -165,13 +166,13 @@ def page_baseline():
     st.subheader("最近一周 & 今日状态（基线测量）")
     b = {}
     st.markdown("**最近一周（1=非常不同意，7=非常同意）**")
-    b["BASE_fast_days"]   = likert("我常觉得一天过得很快（时间加速感）")
-    b["BASE_fragment"]    = likert("我常忘记具体哪天发生了什么（时间断裂感）")
-    b["BASE_control_anx"] = likert("我容易被“时间控制/拖延感”困扰（时间焦虑）")
+    b["BASE_fast_days"]   = likert("我常觉得一天过得很快")
+    b["BASE_fragment"]    = likert("我常忘记具体哪天发生了什么")
+    b["BASE_control_anx"] = likert("我容易被“时间控制/拖延感”困扰")
 
     st.markdown("**今日状态**")
     b["mood_today"] = st.slider("你今天整体情绪如何？", 0, 10, 6)
-    b["baseline_note"] = st.text_area("此刻关于你自己的“时间感”的一句话（可选）", height=60)
+    b["baseline_note"] = st.text_area("此刻关于你“时间感”的一句话（可选）", height=60)
 
     if st.button("继续 / Continue", type="primary", use_container_width=True):
         st.session_state["responses"]["BASE"] = b
@@ -194,13 +195,13 @@ def page_choose_order():
 def questionnaire_ui(tag: str):
     q = {}
     st.markdown("### Section 2 — Structured / Directive Layer（1–7）")
-    q["Q1"] = likert("我能清晰地感到时间在流动（Temporal awareness）")
-    q["Q2"] = likert("我觉得自己能掌控互动的节奏（Sense of control）")
-    q["Q3"] = likert("系统的反应大多在我的预期之内（Predictability）")
-    q["Q4"] = likert("我感觉这段时间的快慢与现实不同（Subjective time speed）")
-    q["Q5"] = likert("我与系统的节奏是同步的（Synchrony）")
-    q["Q6"] = likert("我愿意继续与它多待一会儿（Desire to continue）")
-    q["Q7"] = likert("这段体验让我情绪更平稳（Calmness）")
+    q["Q1"] = likert("我能清晰地感到时间在流动")
+    q["Q2"] = likert("我觉得自己能掌控互动的节奏")
+    q["Q3"] = likert("系统的反应大多在我的预期之内")
+    q["Q4"] = likert("我感觉这段时间的快慢与现实不同")
+    q["Q5"] = likert("我与系统的节奏是同步的")
+    q["Q6"] = likert("我愿意继续与它多待一会儿")
+    q["Q7"] = likert("这段体验让我情绪更平稳")
 
     st.markdown("### Section 3 — Phenomenological Imagery Probe")
     q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：", ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
@@ -209,9 +210,9 @@ def questionnaire_ui(tag: str):
     q["Q11"] = st.text_input("用一个词形容这段体验的氛围：", value="")
 
     st.markdown("### Section 4 — Reflective / Meta Layer")
-    q["Q12"] = st.text_area("在刚才的体验中，你对时间的感觉有变化吗？（如变慢、变快、变模糊、变得不重要等）", height=80)
+    q["Q12"] = st.text_area("在刚才的体验中，你对时间的感觉有变化吗？", height=80)
     q["Q13"] = st.selectbox("当界面的反应不是你的预期时，你的第一反应是：",
-                            ["放松（不用急）","好奇（想看看会怎样）","不安（不确定该做什么）","没什么特别感觉"], index=1)
+                            ["放松","好奇","不安","没什么特别感觉"], index=1)
     q["Q14"] = st.text_area("这次体验让你对“掌控/节奏”有新的想法吗？", height=80)
     q["Q15"] = st.text_area("如果要和朋友形容这次体验，你会怎么说？", height=80)
 
@@ -233,6 +234,12 @@ def page_session(tag: str, label: str):
         return
 
     elapsed = int(time.time() - st.session_state["start_ts"])
+
+    # 防止个别浏览器焦点导致 0s 卡住：若 2 秒后仍为 0，则软刷新一次
+    if elapsed <= 0 and st.session_state.get("elapsed_probe"):
+        if time.time() - st.session_state["elapsed_probe"] > 2:
+            st.rerun()
+
     remaining = max(0, SESSION_SECONDS - elapsed)
     st.info(f"已用时 {elapsed}s · 建议至少 {SESSION_SECONDS}s · 剩余 {remaining}s")
 
@@ -282,6 +289,11 @@ def page_demo():
             st.error(f"❌ TEST 写入失败：{e}")
 
     if st.button("Submit all & Save", type="primary"):
+        # 兜底：若仍在计时但用户直奔提交，把至今时长写进去
+        for _lbl in ("Directive", "Ambiguous"):
+            if _lbl not in st.session_state["durations"] and st.session_state.get("start_ts"):
+                st.session_state["durations"][_lbl] = round(time.time() - st.session_state["start_ts"], 2)
+
         now_iso = datetime.utcnow().isoformat()
         order = st.session_state["order"] or ["A","B"]
         a_label = label_for(order[0])   # 记录每一段的条件标签
