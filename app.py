@@ -115,7 +115,7 @@ def _figma_embed_url(proto_url: str) -> str:
     return (
         f"https://www.figma.com/embed?embed_host=share"
         f"&url={encoded}"
-        f""&hide-ui=1&hide-sidebar=1&scaling=scale-down"
+        f"&hide-ui=1&hide-sidebar=1&scaling=scale-down"
     )
 
 def render_figma(label: str):
