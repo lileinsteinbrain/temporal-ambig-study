@@ -26,13 +26,13 @@ creds_info = st.secrets["gcp_service_account"]  # 放在 Streamlit Cloud 的 Sec
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-# ------------ 统一表头（若表为空会自动补上） ------------
+# ===== 统一表头（V2）=====
 HEADERS = [
     # Meta
     "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
     "dur_directive", "dur_ambiguous",
-    # —— 新增：条件特定输入（与 A/B 无关，固定列）——
+    # New fields
     "Ambiguous_size", "Directive_time", "Repeat_note",
     # A block (Q1..Q15)
     *[f"A_Q{i}" for i in range(1, 16)],
@@ -46,28 +46,30 @@ HEADERS = [
 ]
 
 def open_target_ws():
-    """优先 data；没有就用第一个工作表；如为空自动写入表头。"""
+    """
+    优先使用/创建 data_v2 页；如果没有就创建，并把表头写入第1行。
+    不再往旧的 data / Sheet1 写，避免和历史错位数据混在一起。
+    """
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
+
+    # 1) 优先 data_v2
     try:
-        ws = sh.worksheet("data")
-        return ws
+        ws = sh.worksheet("data_v2")
     except gspread.WorksheetNotFound:
-        pass
+        ws = sh.add_worksheet(title="data_v2", rows=2000, cols=120)
 
+    # 2) 如第1行为空或不是我们需要的表头，就重写表头
     try:
-        ws = sh.sheet1
+        first_row = ws.row_values(1)
     except Exception:
-        ws = sh.add_worksheet(title="Sheet1", rows=2000, cols=80)
+        first_row = []
 
-    try:
-        a1 = ws.acell("A1").value
-    except Exception:
-        a1 = None
-
-    if not a1 or "Type '@Date' to open date picker" in str(a1):
-        ws.update("A1", [HEADERS])  # 写入表头
+    if first_row != HEADERS:
+        ws.clear()  # 清空整页，避免残留
+        ws.update("A1", [HEADERS])
 
     return ws
+
 
 # 👇 启动就初始化工作表 & 表头（不用等到最后一步）
 WS = open_target_ws()
