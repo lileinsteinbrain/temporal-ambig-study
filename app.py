@@ -26,8 +26,10 @@ creds_info = st.secrets["gcp_service_account"]  # 放在 Streamlit Cloud 的 Sec
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-# ===== 统一表头（V2）=====
+# ===== 统一表头（V3）=====
 HEADERS = [
+    # Participant ID (auto)
+    "participant_id",
     # Meta
     "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
@@ -44,6 +46,7 @@ HEADERS = [
     # Demographics
     "DEMO_age", "DEMO_gender",
 ]
+
 
 def open_target_ws():
     """
@@ -330,6 +333,20 @@ def page_demo():
                 st.session_state["durations"][_lbl] = round(time.time() - st.session_state["start_ts"], 2)
 
         now_iso = datetime.utcnow().isoformat()
+                # ---- 自动生成匿名 participant ID ----
+        try:
+            existing_rows = len(WS.get_all_values())
+            pid = f"P{existing_rows:03d}"  # 例如 P001, P002...
+        except Exception:
+            pid = "P000"
+
+        # ---- 初始化写入行并加入 PID ----
+        row = [pid, now_iso, "→".join(order), a_label, b_label,
+               durs.get("Directive", None), durs.get("Ambiguous", None),
+               st.session_state["responses"]["A"].get("Ambiguous_size", ""),
+               st.session_state["responses"]["B"].get("Directive_time", ""),
+               st.session_state["responses"]["DEMO"].get("Repeat_note", "")]
+
         order = st.session_state["order"] or ["A","B"]
         a_label = label_for(order[0])   # 记录每一段的条件标签
         b_label = label_for(order[1])
