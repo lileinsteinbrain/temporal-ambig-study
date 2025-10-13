@@ -32,6 +32,8 @@ HEADERS = [
     "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
     "dur_directive", "dur_ambiguous",
+    # —— 新增：条件特定输入（与 A/B 无关，固定列）——
+    "Ambiguous_size", "Directive_time", "Repeat_note",
     # A block (Q1..Q15)
     *[f"A_Q{i}" for i in range(1, 16)],
     # B block (Q1..Q15)
@@ -86,6 +88,12 @@ def init_state():
         "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
         "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
         "elapsed_probe": None,         # 防 0s 卡住的小探针
+        # —— 新增：条件特定输入收集（与 A/B 无关，固定键）——
+        "extras": {
+            "Ambiguous_size": "",      # "Small"/"Medium"/"Large"
+            "Directive_time": "",      # "3s"/"6s"/.../"Not sure"
+            "Repeat_note": ""          # 开放文本
+        }
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -260,7 +268,26 @@ def page_form(tag: str, cond_tag: str):
     label = label_for(cond_tag)  # "Ambiguous"/"Directive"
     st.subheader(f"Questionnaire {tag} — {label}")
     st.caption("请基于刚才这一段体验作答。")
+
+    # —— 新增：条件特定提问（写入固定键，不随 A/B 变化）——
+    if label == "Ambiguous":
+        amb_size = st.radio(
+            "你主要使用的泡泡大小是？",
+            ["Small (近)","Medium (中)","Large (远)"],
+            index=1, horizontal=True
+        )
+        # 存成简洁值 Small/Medium/Large
+        st.session_state["extras"]["Ambiguous_size"] = amb_size.split(" ")[0]
+    else:  # Directive
+        dir_time = st.selectbox(
+            "你在这一段设置的具体时间是？",
+            ["3s","6s","10s","15s","30s","Not sure"], index=2
+        )
+        st.session_state["extras"]["Directive_time"] = dir_time
+
+    # 原问卷
     questionnaire_ui(tag)
+
     if st.button("Submit questionnaire", type="primary"):
         st.success("✅ Responses saved.")
         st.session_state["stage"] = "break" if tag == "A" else "demo"
@@ -279,11 +306,17 @@ def page_demo():
     d["gender"] = st.selectbox("性别（可选）", ["不透露","女性","男性","非二元/其他"], index=0)
     st.session_state["responses"]["DEMO"] = d
 
+    # 可选：是否重复/重来过（开放题）
+    st.markdown("**是否重复过体验（可选）**")
+    st.session_state["extras"]["Repeat_note"] = st.text_input(
+        "如果你中途重复/重来过，请写大约几次或备注（留空表示没有）", value=""
+    )
+
     # 🔧 调试：一键试写一行，方便排查权限/连接问题
     if st.button("🔧 Test write to Sheet (debug)"):
         try:
             now_iso = datetime.utcnow().isoformat()
-            WS.append_row([now_iso, "TEST", "", "", "", ""], value_input_option="RAW")
+            WS.append_row([now_iso, "TEST", "", "", "", "", "", "", "", ""], value_input_option="RAW")
             st.success("✅ TEST 行已写入（去表里刷新看看）")
         except Exception as e:
             st.error(f"❌ TEST 写入失败：{e}")
@@ -299,6 +332,7 @@ def page_demo():
         a_label = label_for(order[0])   # 记录每一段的条件标签
         b_label = label_for(order[1])
         durs = st.session_state["durations"]
+        extras = st.session_state["extras"]
 
         row = [
             now_iso,
@@ -306,6 +340,10 @@ def page_demo():
             a_label, b_label,
             durs.get("Directive", None),
             durs.get("Ambiguous", None),
+            # —— 新增：固定列（与 A/B 无关）——
+            extras.get("Ambiguous_size",""),
+            extras.get("Directive_time",""),
+            extras.get("Repeat_note",""),
         ]
         # A responses
         for i in range(1, 16):
