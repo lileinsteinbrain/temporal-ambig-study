@@ -28,13 +28,11 @@ gc = gspread.authorize(credentials)
 
 # ===== 统一表头（V3）=====
 HEADERS = [
-    # Participant ID (auto)
-    "participant_id",
     # Meta
-    "timestamp_utc", "order", "A_condition", "B_condition",
+    "participant_id", "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
     "dur_directive", "dur_ambiguous",
-    # New fields
+    # Choices per condition (new)
     "Ambiguous_size", "Directive_time", "Repeat_note",
     # A block (Q1..Q15)
     *[f"A_Q{i}" for i in range(1, 16)],
@@ -333,37 +331,30 @@ def page_demo():
                 st.session_state["durations"][_lbl] = round(time.time() - st.session_state["start_ts"], 2)
 
         now_iso = datetime.utcnow().isoformat()
-                # ---- 自动生成匿名 participant ID ----
+        order = st.session_state["order"] or ["A","B"]
+        a_label = label_for(order[0])   # "Ambiguous"/"Directive"
+        b_label = label_for(order[1])
+        durs   = st.session_state["durations"]
+
+        # ---- 自动生成匿名 participant ID（确保在 row 使用前定义）----
         try:
-            existing_rows = len(WS.get_all_values())
-            pid = f"P{existing_rows:03d}"  # 例如 P001, P002...
+            total_rows = len(WS.get_all_values())  # 包含表头
+            pid = f"P{total_rows:03d}"             # e.g. P001, P002...
         except Exception:
             pid = "P000"
 
-        # ---- 初始化写入行并加入 PID ----
-        row = [pid, now_iso, "→".join(order), a_label, b_label,
-               durs.get("Directive", None), durs.get("Ambiguous", None),
-               st.session_state["responses"]["A"].get("Ambiguous_size", ""),
-               st.session_state["responses"]["B"].get("Directive_time", ""),
-               st.session_state["responses"]["DEMO"].get("Repeat_note", "")]
+        # ---- 读取两段里的选择（若没答则给空串）----
+        amb_size = st.session_state["responses"].get("A", {}).get("Ambiguous_size", "")
+        dir_time = st.session_state["responses"].get("B", {}).get("Directive_time", "")
+        repeat_note = st.session_state["responses"].get("DEMO", {}).get("Repeat_note", "")
 
-        order = st.session_state["order"] or ["A","B"]
-        a_label = label_for(order[0])   # 记录每一段的条件标签
-        b_label = label_for(order[1])
-        durs = st.session_state["durations"]
-        extras = st.session_state["extras"]
-
+        # ---- 组装一行（先写 meta，再把问卷拼进去）----
         row = [
-            now_iso,
-            "→".join(order),
-            a_label, b_label,
-            durs.get("Directive", None),
-            durs.get("Ambiguous", None),
-            # —— 新增：固定列（与 A/B 无关）——
-            extras.get("Ambiguous_size",""),
-            extras.get("Directive_time",""),
-            extras.get("Repeat_note",""),
+            pid, now_iso, "→".join(order), a_label, b_label,
+            durs.get("Directive", ""), durs.get("Ambiguous", ""),
+            amb_size, dir_time, repeat_note,
         ]
+
         # A responses
         for i in range(1, 16):
             row.append(st.session_state["responses"]["A"].get(f"Q{i}", ""))
