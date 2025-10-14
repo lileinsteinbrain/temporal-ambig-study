@@ -87,26 +87,26 @@ st.set_page_config(page_title="Temporal Feel Study", page_icon="🫧", layout="c
 # ------------ State init ------------
 
 def init_state():
-defaults = {
-"consent": False,
-# flow: consent -> baseline -> choose_order -> sessionA -> formA -> break -> sessionB -> formB -> demo -> end
-"stage": "consent",
-"order": None,                 # ["A","B"] 或 ["B","A"]
-"start_ts": None,
-"end_ts": None,
-"current_condition": None,     # "Directive"/"Ambiguous"（计时保护）
-"durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
-"responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
-"elapsed_probe": None,         # 防 0s 卡住的小探针
-# —— 新增：条件特定输入收集（与 A/B 无关，固定键）——
-"extras": {
-"Ambiguous_size": "",      # "Small"/"Medium"/"Large"
-"Directive_time": "",      # "3s"/"6s"/.../"Not sure"
-"Repeat_note": ""          # 开放文本
-}
-}
-for k, v in defaults.items():
-st.session_state.setdefault(k, v)
+    defaults = {
+        "consent": False,
+        # flow: consent -> baseline -> choose_order -> sessionA -> formA -> break -> sessionB -> formB -> demo -> end
+        "stage": "consent",
+        "order": None,                 # ["A","B"] 或 ["B","A"]
+        "start_ts": None,
+        "end_ts": None,
+        "current_condition": None,     # "Directive"/"Ambiguous"（计时保护）
+        "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
+        "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
+        "elapsed_probe": None,         # 防 0s 卡住的小探针
+        # —— 新增：条件特定输入收集（与 A/B 无关，固定键）——
+        "extras": {
+        "Ambiguous_size": "",      # "Small"/"Medium"/"Large"
+        "Directive_time": "",      # "3s"/"6s"/.../"Not sure"
+        "Repeat_note": ""          # 开放文本
+        }
+    }
+    for k, v in defaults.items():
+        st.session_state.setdefault(k, v)
 
 init_state()
 
