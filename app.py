@@ -146,9 +146,9 @@ def start_timer(label: str):
 
 def stop_timer() -> float:
     if st.session_state["start_ts"] is None:
-    return 0.0
+        return 0.0
     st.session_state["end_ts"] = time.time()
-    return float(st.session_state["end_ts"] - st.session_state["start_ts"])
+        return float(st.session_state["end_ts"] - st.session_state["start_ts"])
 
 def likert(prompt: str):
     return st.radio(prompt, options=[1,2,3,4,5,6,7], horizontal=True)
