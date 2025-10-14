@@ -1,5 +1,3 @@
-要的 请给我
-
 # app.py
 
 import random
