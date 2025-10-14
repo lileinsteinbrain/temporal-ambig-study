@@ -50,31 +50,31 @@ HEADERS = [
 ]
 
 def open_target_ws():
-"""
-优先使用/创建 data_v2 页；如果没有就创建，并把表头写入第1行。
-不再往旧的 data / Sheet1 写，避免和历史错位数据混在一起。
-"""
-sh = gc.open_by_key(GOOGLE_SHEET_ID)
+    """
+    优先使用/创建 data_v2 页；如果没有就创建，并把表头写入第1行。
+    不再往旧的 data / Sheet1 写，避免和历史错位数据混在一起。
+    """
+    sh = gc.open_by_key(GOOGLE_SHEET_ID)
 
-```
-# 1) 优先 data_v2
-try:
-    ws = sh.worksheet("data_v2")
-except gspread.WorksheetNotFound:
-    ws = sh.add_worksheet(title="data_v2", rows=2000, cols=120)
+    ```
+    # 1) 优先 data_v2
+    try:
+        ws = sh.worksheet("data_v2")
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title="data_v2", rows=2000, cols=120)
 
-# 2) 如第1行为空或不是我们需要的表头，就重写表头
-try:
-    first_row = ws.row_values(1)
-except Exception:
-    first_row = []
+    # 2) 如第1行为空或不是我们需要的表头，就重写表头
+    try:
+        first_row = ws.row_values(1)
+    except Exception:
+        first_row = []
 
-if first_row != HEADERS:
-    ws.clear()  # 清空整页，避免残留
-    ws.update("A1", [HEADERS])
+    if first_row != HEADERS:
+        ws.clear()  # 清空整页，避免残留
+        ws.update("A1", [HEADERS])
 
-return ws
-```
+    return ws
+    ```
 
 # 👇 启动就初始化工作表 & 表头（不用等到最后一步）
 
