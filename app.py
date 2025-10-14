@@ -175,12 +175,12 @@ def page_consent():
     """)
     agree = st.checkbox("我已阅读并同意 / I consent.", value=False)
     if st.button("继续 / Continue", use_container_width=True):
-    if not agree:
-    st.warning("请先勾选同意")
-    else:
-    st.session_state["consent"] = True
-    st.session_state["stage"]   = "baseline"
-    st.rerun()
+        if not agree:
+        st.warning("请先勾选同意")
+        else:
+        st.session_state["consent"] = True
+        st.session_state["stage"]   = "baseline"
+        st.rerun()
 
 def page_baseline():
     st.subheader("最近一周 & 今日状态（基线测量）")
