@@ -56,7 +56,7 @@ def open_target_ws():
     """
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
 
-    ```
+    
     # 1) 优先 data_v2
     try:
         ws = sh.worksheet("data_v2")
@@ -74,7 +74,7 @@ def open_target_ws():
         ws.update("A1", [HEADERS])
 
     return ws
-    ```
+    
 
 # 👇 启动就初始化工作表 & 表头（不用等到最后一步）
 
