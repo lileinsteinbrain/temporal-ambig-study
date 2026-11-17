@@ -15,26 +15,26 @@ from config import (
     SESSION_SECONDS        # e.g. 120
 )
 
-# ------------ 固定使用这张 Google Sheet ------------
+# ------------ Always use this Google Sheet ------------
 GOOGLE_SHEET_ID = "1GppaOTunJ6yt2zJeIhMWxb1xZ2glqUo6XNKK-l-z8FY"
-TARGET_SHEET_TITLE = "data_v2"  # 统一写到 data_v2
+TARGET_SHEET_TITLE = "data_v2"  # all rows go to data_v2
 
 # ------------ Google Sheets Auth ------------
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-creds_info = st.secrets["gcp_service_account"]  # 放在 Streamlit Cloud 的 Secrets
+creds_info = st.secrets["gcp_service_account"]  # stored in Streamlit Cloud secrets
 credentials = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
 gc = gspread.authorize(credentials)
 
-# ------------ 统一表头（与数据结构一一对应） ------------
+# ------------ Column headers (one-to-one with the data structure) ------------
 HEADERS = [
     # Meta
     "participant_id", "timestamp_utc", "order", "A_condition", "B_condition",
     # Durations
     "dur_directive", "dur_ambiguous",
-    # Ambiguous / Directive 自报
+    # Ambiguous / Directive self-report
     "Ambiguous_size", "Directive_time", "Repeat_note",
     # A block (Q1..Q15)
     *[f"A_Q{i}" for i in range(1, 16)],
@@ -49,7 +49,7 @@ HEADERS = [
 
 def open_target_ws():
     """
-    只写入 data_v2。不存在就创建并写表头；存在但 A1 为空也补表头。
+    Write only to data_v2. Create it with headers if missing; add headers if A1 is empty.
     """
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
     try:
@@ -68,7 +68,7 @@ def open_target_ws():
 
 WS = open_target_ws()
 
-# 追加写入的容错重试（指数退避）
+# Retry appends on failure (exponential backoff)
 def safe_append_row(ws, row: List, *, retries: int = 5, sleep_base: float = 0.6):
     for i in range(retries):
         try:
@@ -89,17 +89,17 @@ def init_state():
         "consent": False,
         # flow: consent -> baseline -> choose_order -> sessionA -> formA -> break -> sessionB -> formB -> demo -> end
         "stage": "consent",
-        "order": None,                 # ["A","B"] 或 ["B","A"]
+        "order": None,                 # ["A","B"] or ["B","A"]
         "start_ts": None,
         "end_ts": None,
-        "current_condition": None,     # "Directive"/"Ambiguous"（计时保护）
+        "current_condition": None,     # "Directive"/"Ambiguous" (timer guard)
         "durations": {},               # {"Directive": seconds, "Ambiguous": seconds}
         "responses": {"A": {}, "B": {}, "BASE": {}, "DEMO": {}},
-        "elapsed_probe": None,         # 防 0s 卡住的小探针
-        # 这三项来自用户自报（若没接到，就留空）
-        "Ambiguous_size": None,        # 例：small/mid/large 或百分比/半径
-        "Directive_time": None,        # 例：3s/6s/10s 或数字秒
-        "Repeat_note": None,           # 例：重复次数/体验备注（可留空）
+        "elapsed_probe": None,         # small probe to avoid the timer sticking at 0 s
+        # These three come from participant self-report (left empty if missing)
+        "Ambiguous_size": None,        # e.g. small/mid/large, or percentage/radius
+        "Directive_time": None,        # e.g. 3s/6s/10s, or seconds as a number
+        "Repeat_note": None,           # e.g. repetition count / notes (optional)
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -107,17 +107,17 @@ def init_state():
 init_state()
 
 def gen_participant_id() -> str:
-    # 简单可读：PYYMMDD-HHMMSS-rand3
+    # Human-readable: PYYMMDD-HHMMSS-rand3
     return datetime.utcnow().strftime("P%y%m%d-%H%M%S-") + f"{random.randint(100,999)}"
 
 # ------------ Helpers ------------
 def label_for(cond_tag: str) -> str:
-    """输入 'A'/'B'；输出人可读标签（A=Ambiguous, B=Directive）。"""
+    """Input 'A'/'B'; return a readable label (A=Ambiguous, B=Directive)."""
     return "Ambiguous" if cond_tag == "A" else "Directive"
 
 def _figma_embed_url(proto_url: str) -> str:
     """
-    把 Figma 的 proto 分享链接转换成可内嵌的 embed 链接，并隐藏 UI。
+    Convert a Figma prototype share link into an embeddable link with the UI hidden.
     """
     encoded = quote(proto_url, safe="")
     return (
@@ -127,11 +127,11 @@ def _figma_embed_url(proto_url: str) -> str:
     )
 
 def render_figma(label: str):
-    # label 必须是 "Directive" 或 "Ambiguous"
+    # label must be "Directive" or "Ambiguous"
     proto = FIGMA_URL_DIRECTIVE if label == "Directive" else FIGMA_URL_AMBIGUOUS
     embed = _figma_embed_url(proto)
     st.components.v1.iframe(src=embed, height=820, scrolling=False)
-    st.link_button("⇱ 在新标签打开原型 / Open prototype", proto, use_container_width=True)
+    st.link_button("⇱ Open prototype in a new tab", proto, use_container_width=True)
 
 def start_timer(label: str):
     st.session_state["current_condition"] = label
@@ -150,29 +150,29 @@ def likert(prompt: str):
 
 # ------------ UI blocks ------------
 def page_consent():
-    st.title("实验参与同意 / Consent")
+    st.title("Consent")
     st.markdown("""
-**研究名称 / Study Title**  
-时间感知与模糊交互（Temporal Feel in Ambiguous Interfaces）
+**Study Title**
+Temporal Feel in Ambiguous Interfaces
 
-**研究简介 / Introduction**  
-你将体验两种短交互（Directive vs Ambiguous），每种约 2 分钟，随后回答简短问题。  
-本研究关注你对“时间流动与掌控感”的主观感受，不存在对错。
+**Introduction**
+You will try two short interactions (Directive and Ambiguous), about 2 minutes each, and then answer a few short questions.
+This study is about how you subjectively experience the flow of time and your sense of control. There are no right or wrong answers.
 
-**隐私与数据 / Privacy & Data**  
-不收集身份信息；可能记录你的操作时序，仅用于匿名研究分析；可随时退出。
+**Privacy & Data**
+No identifying information is collected. The timing of your actions may be recorded and used only for anonymous research analysis. You may withdraw at any time.
 
-**自愿参与 / Voluntary**  
-完全自愿，随时退出，无任何负面影响。
+**Voluntary Participation**
+Participation is entirely voluntary. You can stop at any time without any negative consequences.
 
-勾选后表示：我已理解以上内容，并自愿参与本研究。
+By ticking the box below, I confirm that I understand the above and agree to take part in this study.
 """)
-    agree = st.checkbox("我已阅读并同意 / I consent.", value=False)
-    if st.button("继续 / Continue", use_container_width=True):
+    agree = st.checkbox("I have read and agree. I consent.", value=False)
+    if st.button("Continue", use_container_width=True):
         if not agree:
-            st.warning("请先勾选同意")
+            st.warning("Please tick the consent box first.")
         else:
-            # 生成参与编号
+            # Generate participant ID
             if not st.session_state["participant_id"]:
                 st.session_state["participant_id"] = gen_participant_id()
             st.session_state["consent"] = True
@@ -180,27 +180,27 @@ def page_consent():
             st.rerun()
 
 def page_baseline():
-    st.subheader("最近一周 & 今日状态（基线测量）")
+    st.subheader("Past week & today (baseline)")
     b = {}
-    st.markdown("**最近一周（1=非常不同意，7=非常同意）**")
-    b["BASE_fast_days"]   = likert("我常觉得一天过得很快")
-    b["BASE_fragment"]    = likert("我常忘记具体哪天发生了什么")
-    b["BASE_control_anx"] = likert("我容易被“时间控制/拖延感”困扰")
+    st.markdown("**Past week (1 = strongly disagree, 7 = strongly agree)**")
+    b["BASE_fast_days"]   = likert("I often feel that days pass very quickly")
+    b["BASE_fragment"]    = likert("I often forget what happened on which day")
+    b["BASE_control_anx"] = likert("I am easily troubled by feeling controlled by time or by procrastination")
 
-    st.markdown("**今日状态**")
-    b["mood_today"] = st.slider("你今天整体情绪如何？", 0, 10, 6)
-    b["baseline_note"] = st.text_area("此刻关于你“时间感”的一句话（可选）", height=60)
+    st.markdown("**Today**")
+    b["mood_today"] = st.slider("How is your overall mood today?", 0, 10, 6)
+    b["baseline_note"] = st.text_area("One sentence about your sense of time right now (optional)", height=60)
 
-    if st.button("继续 / Continue", type="primary", use_container_width=True):
+    if st.button("Continue", type="primary", use_container_width=True):
         st.session_state["responses"]["BASE"] = b
         st.session_state["stage"] = "choose_order"
         st.rerun()
 
 def page_choose_order():
-    st.subheader("选择体验顺序（或随机）")
-    choice = st.radio("先体验哪一个？", ["Directive → Ambiguous", "Ambiguous → Directive", "随机 / Random"], index=2)
-    if st.button("开始 / Start", use_container_width=True):
-        if choice == "随机 / Random":
+    st.subheader("Choose the order (or random)")
+    choice = st.radio("Which one first?", ["Directive → Ambiguous", "Ambiguous → Directive", "Random"], index=2)
+    if st.button("Start", use_container_width=True):
+        if choice == "Random":
             order = ["A","B"] if int(time.time()) % 2 == 0 else ["B","A"]
         else:
             order_labels = ["Directive","Ambiguous"] if choice.startswith("Directive") else ["Ambiguous","Directive"]
@@ -211,35 +211,35 @@ def page_choose_order():
 
 def questionnaire_ui(tag: str):
     q = {}
-    st.markdown("### Section 2 — Structured / Directive Layer（1–7）")
-    q["Q1"] = likert("我能清晰地感到时间在流动")
-    q["Q2"] = likert("我觉得自己能掌控互动的节奏")
-    q["Q3"] = likert("系统的反应大多在我的预期之内")
-    q["Q4"] = likert("我感觉这段时间的快慢与现实不同")
-    q["Q5"] = likert("我与系统的节奏是同步的")
-    q["Q6"] = likert("我愿意继续与它多待一会儿")
-    q["Q7"] = likert("这段体验让我情绪更平稳")
+    st.markdown("### Section 2 — Structured / Directive Layer (1–7)")
+    q["Q1"] = likert("I could clearly feel time passing")
+    q["Q2"] = likert("I felt in control of the pace of the interaction")
+    q["Q3"] = likert("The system mostly responded as I expected")
+    q["Q4"] = likert("Time during this session felt faster or slower than real time")
+    q["Q5"] = likert("I was in sync with the system's rhythm")
+    q["Q6"] = likert("I would like to stay with it a little longer")
+    q["Q7"] = likert("This experience made me feel calmer")
 
     st.markdown("### Section 3 — Phenomenological Imagery Probe")
-    q["Q8"]  = st.selectbox("如果这段体验有一种质地，它更像：", ["流动的水","厚重的雾","脉动的光","静止的空气","其他"], index=0)
-    q["Q9"]  = st.selectbox("这段体验中的时间更像：", ["一条直线","一个圆","循环","空白/真空","其他"], index=0)
-    q["Q10"] = st.selectbox("当界面回应你时，你更像是在：", ["引导它","被它带着走","和它一起移动","谁也没在控制"], index=1)
-    q["Q11"] = st.text_input("用一个词形容这段体验的氛围：", value="")
+    q["Q8"]  = st.selectbox("If this experience had a texture, it would be closest to:", ["Flowing water","Thick fog","Pulsing light","Still air","Other"], index=0)
+    q["Q9"]  = st.selectbox("Time in this experience felt more like:", ["A straight line","A circle","A loop","A blank / vacuum","Other"], index=0)
+    q["Q10"] = st.selectbox("When the interface responded to you, you felt more like you were:", ["Guiding it","Being carried along by it","Moving together with it","Nobody was in control"], index=1)
+    q["Q11"] = st.text_input("Describe the atmosphere of this experience in one word:", value="")
 
     st.markdown("### Section 4 — Reflective / Meta Layer")
-    q["Q12"] = st.text_area("在刚才的体验中，你对时间的感觉有变化吗？", height=80)
-    q["Q13"] = st.selectbox("当界面的反应不是你的预期时，你的第一反应是：",
-                            ["放松","好奇","不安","没什么特别感觉"], index=1)
-    q["Q14"] = st.text_area("这次体验让你对“掌控/节奏”有新的想法吗？", height=80)
-    q["Q15"] = st.text_area("如果要和朋友形容这次体验，你会怎么说？", height=80)
+    q["Q12"] = st.text_area("Did your sense of time change during the experience you just had?", height=80)
+    q["Q13"] = st.selectbox("When the interface did not respond as you expected, your first reaction was:",
+                            ["Relaxed","Curious","Uneasy","Nothing in particular"], index=1)
+    q["Q14"] = st.text_area("Did this experience give you any new thoughts about control or pace?", height=80)
+    q["Q15"] = st.text_area("How would you describe this experience to a friend?", height=80)
 
     st.session_state["responses"][tag] = q
 
 def page_session(tag: str, label: str):
     st.subheader(f"Session {tag} — {label}")
-    st.caption("建议体验约 2 分钟。点击开始后计时自动记录。")
+    st.caption("Suggested duration is about 2 minutes. Timing starts automatically when you press Start.")
 
-    # 条件切换保护：若切换了条件，清空之前计时
+    # Condition-switch guard: reset the timer if the condition changed
     if st.session_state["current_condition"] not in (None, label):
         st.session_state["start_ts"] = None
         st.session_state["end_ts"] = None
@@ -252,13 +252,13 @@ def page_session(tag: str, label: str):
 
     elapsed = int(time.time() - st.session_state["start_ts"])
 
-    # 防止个别浏览器焦点导致 0s 卡住：若 2 秒后仍为 0，则软刷新一次
+    # Some browsers' focus handling can freeze the timer at 0 s: soft-refresh once if still 0 after 2 s
     if elapsed <= 0 and st.session_state.get("elapsed_probe"):
         if time.time() - st.session_state["elapsed_probe"] > 2:
             st.rerun()
 
     remaining = max(0, SESSION_SECONDS - elapsed)
-    st.info(f"已用时 {elapsed}s · 建议至少 {SESSION_SECONDS}s · 剩余 {remaining}s")
+    st.info(f"Elapsed {elapsed}s · suggested at least {SESSION_SECONDS}s · {remaining}s remaining")
 
     render_figma(label)
     st.write("")
@@ -271,12 +271,12 @@ def page_session(tag: str, label: str):
             st.rerun()
     with col2:
         if elapsed < SESSION_SECONDS:
-            st.caption("⏳ 建议至少体验到推荐时长后再停止。")
+            st.caption("⏳ Please try to continue until the suggested duration before stopping.")
 
 def page_form(tag: str, cond_tag: str):
     label = label_for(cond_tag)  # "Ambiguous"/"Directive"
     st.subheader(f"Questionnaire {tag} — {label}")
-    st.caption("请基于刚才这一段体验作答。")
+    st.caption("Please answer based on the session you just completed.")
     questionnaire_ui(tag)
     if st.button("Submit questionnaire", type="primary"):
         st.success("✅ Responses saved.")
@@ -284,47 +284,47 @@ def page_form(tag: str, cond_tag: str):
         st.rerun()
 
 def page_break():
-    st.info("休息 1 分钟后进行下一段体验（喝口水、伸展一下）。准备好后点击继续。")
+    st.info("Take a 1-minute break before the next session (have some water, stretch). Click Continue when ready.")
     if st.button("Continue to Session B", use_container_width=True):
         st.session_state["stage"] = "sessionB"
         st.rerun()
 
 def page_demo():
-    st.subheader("Demographics（简）")
+    st.subheader("Demographics (brief)")
     d = {}
-    d["age"]    = st.selectbox("年龄段", ["18–24","25–34","35–44","45–54","55+"], index=1)
-    d["gender"] = st.selectbox("性别（可选）", ["不透露","女性","男性","非二元/其他"], index=0)
+    d["age"]    = st.selectbox("Age group", ["18–24","25–34","35–44","45–54","55+"], index=1)
+    d["gender"] = st.selectbox("Gender (optional)", ["Prefer not to say","Female","Male","Non-binary / other"], index=0)
     st.session_state["responses"]["DEMO"] = d
 
-    # 🔧 调试：一键试写一行，方便排查权限/连接问题
+    # 🔧 Debug: write one test row to check permissions / connection
     if st.button("🔧 Test write to Sheet (debug)"):
         try:
             now_iso = datetime.utcnow().isoformat()
-            # 用 HEADERS 长度补齐
+            # Pad to the length of HEADERS
             test_row = ["DBG", now_iso] + [""] * (len(HEADERS) - 2)
             safe_append_row(WS, test_row)
-            st.success("✅ TEST 行已写入（去表里刷新看看）")
+            st.success("✅ Test row written (refresh the sheet to check)")
         except Exception as e:
-            st.error(f"❌ TEST 写入失败：{e}")
+            st.error(f"❌ Test write failed: {e}")
 
     if st.button("Submit all & Save", type="primary"):
-        # 兜底：若仍在计时但用户直奔提交，把至今时长写进去
+        # Fallback: if the timer is still running but the participant submits, record the elapsed time so far
         for _lbl in ("Directive", "Ambiguous"):
             if _lbl not in st.session_state["durations"] and st.session_state.get("start_ts"):
                 st.session_state["durations"][_lbl] = round(time.time() - st.session_state["start_ts"], 2)
 
         now_iso = datetime.utcnow().isoformat()
         order = st.session_state["order"] or ["A","B"]
-        a_label = label_for(order[0])   # 每段的条件标签
+        a_label = label_for(order[0])   # condition label for each session
         b_label = label_for(order[1])
         durs = st.session_state["durations"]
 
-        # 自报三项：若 UI 未写入就留空
+        # Self-report fields: left empty if not filled in the UI
         amb_size = st.session_state.get("Ambiguous_size", "") or ""
         dir_time = st.session_state.get("Directive_time", "") or ""
         repeat_note = st.session_state.get("Repeat_note", "") or ""
 
-        # 汇总一行（严格按 HEADERS 顺序）
+        # Build one row (strictly in HEADERS order)
         row = [
             st.session_state.get("participant_id", ""),   # participant_id
             now_iso,
@@ -361,11 +361,11 @@ def page_demo():
             st.session_state["stage"] = "end"
             st.rerun()
         except Exception as e:
-            st.error(f"❌ 写入 Google Sheet 失败：{e}")
+            st.error(f"❌ Failed to write to Google Sheet: {e}")
 
 def page_end():
-    st.success("全部完成，感谢参与！你可以关闭页面。")
-    st.caption("研究者提示：只看 Google Sheet 底部的 data_v2 页签即可查看数据。")
+    st.success("All done, thank you for taking part! You can close this page.")
+    st.caption("Researcher note: data is in the data_v2 tab at the bottom of the Google Sheet.")
 
 # ------------ Dispatcher ------------
 def dispatch():
